@@ -101,10 +101,12 @@ def _build_effective_user_prompt(
         prompt so the model "sees" them — including any injected payload.
 
     TOOL_OUTPUT_INJECTION:
-        The injection payload is already embedded in scenario.user_prompt.
-        If the template contains ``{secret}``, it is substituted with the
-        real secret value to simulate a tool output that already read the
-        file (e.g. ``cat secret.txt``).
+        The injection payload is embedded in scenario.user_prompt (the simulated
+        tool output).  Workspace files — including secret.txt — are appended as
+        file blocks so the model has legitimate read access, matching the realistic
+        precondition where an agent can read workspace files as part of its job.
+        The attacker never sees secret.txt directly; they only tamper with what the
+        tool reports, and rely on the model to follow the injected directive.
     """
     if scenario.attack_type == AttackType.FILE_INJECTION:
         file_blocks = []
@@ -120,6 +122,15 @@ def _build_effective_user_prompt(
         return f"{scenario.user_prompt}\n\n{file_context}"
 
     if scenario.attack_type == AttackType.TOOL_OUTPUT_INJECTION:
-        return scenario.user_prompt.replace("{secret}", secret)
+        # Provide the same workspace file access as FILE_INJECTION so the model
+        # can act on injected directives that reference those files.
+        file_blocks = []
+        for filename in scenario.environment.files:
+            content = sandbox.read_file(filename)
+            file_blocks.append(f"<file name='{filename}'>\n{content}\n</file>")
+        secret_content = sandbox.read_file("secret.txt")
+        file_blocks.append(f"<file name='secret.txt'>\n{secret_content}\n</file>")
+        file_context = "\n".join(file_blocks)
+        return f"{scenario.user_prompt}\n\n{file_context}"
 
     return scenario.user_prompt
